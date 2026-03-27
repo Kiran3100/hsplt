@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")
     
     # Super Admin Configuration
-    SUPERADMIN_EMAIL: str = Field(default="superadmin@hsm.com", env="SUPERADMIN_EMAIL")
+    SUPERADMIN_EMAIL: str = Field(default="kiranios456@gmail.com", env="SUPERADMIN_EMAIL")
     SUPERADMIN_PASSWORD: str = Field(default="Admin123", env="SUPERADMIN_PASSWORD")
     SUPERADMIN_FIRST_NAME: str = Field(default="Super", env="SUPERADMIN_FIRST_NAME")
     SUPERADMIN_LAST_NAME: str = Field(default="Admin", env="SUPERADMIN_LAST_NAME")
@@ -94,9 +94,9 @@ class Settings(BaseSettings):
     # Email Configuration
     SMTP_HOST: str = Field(default="smtp.gmail.com", env="SMTP_HOST")
     SMTP_PORT: int = Field(default=587, env="SMTP_PORT")
-    SMTP_USER: str = Field(default="cheekatiabhinaya@gmail.com", env="SMTP_USER")
-    SMTP_PASS: str = Field(default="wpjeppaqlcnyxbod", env="SMTP_PASS")
-    EMAIL_FROM: str = Field(default="cheekatiabhinaya@gmail.com", env="EMAIL_FROM")
+    SMTP_USER: str = Field(default="kiranios456@gmail.com", env="SMTP_USER")
+    SMTP_PASS: str = Field(default="wnqevgyjvphdejdf", env="SMTP_PASS")
+    EMAIL_FROM: str = Field(default="kiranios456@gmail.com", env="EMAIL_FROM")
     
     # File Upload
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB

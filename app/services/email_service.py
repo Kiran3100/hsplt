@@ -1,7 +1,7 @@
 # app/services/email_service.py
 
 """
-Email service using SendGrid SMTP with smart TLS handling
+Email service using SendGrid SMTP with correct TLS handling
 """
 import aiosmtplib
 import asyncio
@@ -21,11 +21,11 @@ class EmailService:
     """Service for sending emails via SendGrid SMTP"""
     
     # SendGrid port configurations
-    # Port 587: STARTTLS (connect plain, upgrade to TLS)
-    # Port 2525: Implicit TLS (TLS from start) - Render-friendly
-    # Port 465: Implicit TLS/SSL
+    # Port 587: STARTTLS (standard)
+    # Port 2525: STARTTLS (Render-friendly alternative)
+    # Port 465: Implicit SSL/TLS
     SENDGRID_PORTS = [2525, 587, 465]
-    TLS_PORTS = {465, 2525}  # Ports that use implicit TLS
+    IMPLICIT_TLS_PORTS = {465}  # ONLY port 465 uses implicit TLS
     
     def __init__(self):
         self.smtp_host = settings.SMTP_HOST
@@ -42,7 +42,7 @@ class EmailService:
                 "  SMTP_PASS=<your_sendgrid_api_key>"
             )
         
-        tls_mode = "Implicit TLS" if self.smtp_port in self.TLS_PORTS else "STARTTLS"
+        tls_mode = "Implicit SSL/TLS" if self.smtp_port in self.IMPLICIT_TLS_PORTS else "STARTTLS"
         logger.info(
             f"EmailService initialized:\n"
             f"  Provider: SendGrid SMTP\n"
@@ -64,8 +64,10 @@ class EmailService:
         Returns (success, error_message)
         """
         try:
-            use_tls = port in self.TLS_PORTS
-            tls_mode = "Implicit TLS" if use_tls else "STARTTLS"
+            # Only port 465 uses implicit TLS
+            # Ports 587 and 2525 both use STARTTLS
+            use_tls = port in self.IMPLICIT_TLS_PORTS
+            tls_mode = "Implicit SSL/TLS" if use_tls else "STARTTLS"
             
             logger.info(f"📡 Trying port {port} ({tls_mode})...")
             
@@ -74,8 +76,8 @@ class EmailService:
                     message,
                     hostname=self.smtp_host,
                     port=port,
-                    use_tls=use_tls,  # Use implicit TLS for ports 465, 2525
-                    start_tls=(not use_tls),  # Only STARTTLS if not using implicit TLS
+                    use_tls=use_tls,  # Only True for port 465
+                    start_tls=(not use_tls),  # True for ports 587 and 2525
                     username=self.smtp_user,
                     password=self.smtp_pass,
                     timeout=timeout,
@@ -121,7 +123,7 @@ class EmailService:
     ) -> bool:
         """
         Send email using SendGrid SMTP with automatic port fallback.
-        Handles both STARTTLS (port 587) and implicit TLS (ports 465, 2525).
+        Ports 587 and 2525 use STARTTLS, port 465 uses implicit SSL/TLS.
         """
         try:
             logger.info(f"📧 Sending email to {to_email}")
@@ -185,21 +187,7 @@ class EmailService:
         text_fallback: Optional[str] = None,
         timeout: int = 30
     ) -> bool:
-        """
-        Send email with PDF attachment via SMTP.
-        
-        Args:
-            to_email: Recipient email
-            subject: Email subject
-            body_html: HTML email body
-            pdf_bytes: PDF file as bytes
-            filename: Attachment filename
-            text_fallback: Plain text version
-            timeout: Request timeout
-            
-        Returns:
-            bool: True if sent successfully
-        """
+        """Send email with PDF attachment via SMTP"""
         try:
             logger.info(f"📎 Sending document email to {to_email} (attachment: {filename})")
             
@@ -228,7 +216,7 @@ class EmailService:
             message.attach(pdf_attachment)
             
             # Send using the same port logic
-            use_tls = self.smtp_port in self.TLS_PORTS
+            use_tls = self.smtp_port in self.IMPLICIT_TLS_PORTS
             
             await asyncio.wait_for(
                 aiosmtplib.send(
@@ -248,7 +236,7 @@ class EmailService:
             return True
                 
         except Exception as e:
-            logger.error(f"❌ Failed to send document email to {to_email}: {type(e).__name__}: {str(e)}")
+            logger.error(f"❌ Failed to send document email: {type(e).__name__}: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return False
@@ -323,13 +311,8 @@ IMPORTANT:
 - Do not share this code with anyone
 - If you didn't request this verification, please ignore this email
 
-If you have any questions, please contact our support team.
-
 Best regards,
 Hospital Management System Team
-
----
-This is an automated message, please do not reply to this email.
         """
         
         return await self.send_email(email, subject, html_content, text_content)
@@ -406,13 +389,8 @@ SECURITY NOTICE:
 - If you didn't request this reset, please ignore this email
 - Your password will remain unchanged until you complete the reset process
 
-If you continue to have problems, please contact our support team.
-
 Best regards,
 Hospital Management System Team
-
----
-This is an automated message, please do not reply to this email.
         """
         
         return await self.send_email(email, subject, html_content, text_content)

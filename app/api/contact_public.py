@@ -308,7 +308,6 @@ async def send_contact_message(
     )
     
 
-# app/api/v1/contact_public.py
 
 @router.get("/render-diagnostics", include_in_schema=True)
 async def render_diagnostics():
@@ -348,38 +347,40 @@ async def render_diagnostics():
         "test_smtp_connection": None,
     }
     
-    # Test SMTP connection with proper TLS handling
+    # Test SMTP connection with correct TLS handling
     try:
         import aiosmtplib
         
         port = settings.SMTP_PORT
-        use_tls = port in [465, 2525]  # These ports use implicit TLS
+        # ONLY port 465 uses implicit TLS
+        # Ports 587 and 2525 both use STARTTLS
+        use_tls = (port == 465)
         
         diagnostics["test_smtp_connection"] = {
             "status": "testing...",
             "host": settings.SMTP_HOST,
             "port": port,
             "use_tls": use_tls,
-            "method": "TLS" if use_tls else "STARTTLS"
+            "method": "Implicit SSL/TLS" if use_tls else "STARTTLS"
         }
         
-        # Create SMTP client with appropriate TLS settings
+        # Create SMTP client with appropriate settings
         smtp = aiosmtplib.SMTP(
             hostname=settings.SMTP_HOST,
             port=port,
-            use_tls=use_tls,  # Use TLS immediately for ports 465, 2525
+            use_tls=use_tls,
             timeout=10
         )
         
         await smtp.connect()
         diagnostics["test_smtp_connection"]["connect"] = "✅ SUCCESS"
         
-        # Only do STARTTLS if not already using TLS
+        # Only do STARTTLS if not using implicit TLS
         if not use_tls:
             await smtp.starttls()
             diagnostics["test_smtp_connection"]["starttls"] = "✅ SUCCESS"
         else:
-            diagnostics["test_smtp_connection"]["starttls"] = "⏭️ SKIPPED (using TLS)"
+            diagnostics["test_smtp_connection"]["starttls"] = "⏭️ SKIPPED (using implicit TLS)"
         
         if settings.SMTP_USER and settings.SMTP_PASS:
             await smtp.login(settings.SMTP_USER, settings.SMTP_PASS)

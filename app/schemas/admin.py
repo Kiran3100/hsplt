@@ -1,0 +1,642 @@
+"""
+Admin schemas for super admin and hospital admin operations.
+"""
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+
+# ============================================================================
+# SUPER ADMIN INPUT SCHEMAS (Create/Update/Filter)
+# ============================================================================
+
+class HospitalUpdate(BaseModel):
+    """Hospital update request"""
+    name: Optional[str] = Field(None, min_length=2, max_length=255)
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = Field(None, pattern=r'^\+?[\d\s\-\(\)]{10,20}$')
+    address: Optional[str] = Field(None, min_length=5)
+    city: Optional[str] = Field(None, min_length=2, max_length=100)
+    state: Optional[str] = Field(None, min_length=2, max_length=100)
+    country: Optional[str] = Field(None, min_length=2, max_length=100)
+    pincode: Optional[str] = Field(None, min_length=3, max_length=10)
+    license_number: Optional[str] = Field(None, max_length=100)
+    website: Optional[str] = Field(None, max_length=255)
+    logo_url: Optional[str] = Field(None, max_length=500)
+
+
+class AdminStatusUpdate(BaseModel):
+    """Admin status update request"""
+    status: str = Field(..., description="New status: ACTIVE, BLOCKED, or PENDING")
+
+
+class HospitalStatusUpdate(BaseModel):
+    """Hospital status update request"""
+    status: str = Field(..., description="New status: ACTIVE, SUSPENDED, or INACTIVE")
+
+
+class SubscriptionPlanCreate(BaseModel):
+    """Subscription plan creation request"""
+    name: str = Field(..., description="Plan name: FREE, STANDARD, or PREMIUM")
+    display_name: str = Field(..., min_length=2, max_length=100)
+    description: Optional[str] = None
+    monthly_price: float = Field(..., ge=0)
+    yearly_price: float = Field(..., ge=0)
+    max_doctors: int = Field(..., ge=0, description="0 = unlimited")
+    max_patients: int = Field(..., ge=0, description="0 = unlimited")
+    max_appointments_per_month: int = Field(..., ge=0)
+    max_storage_gb: int = Field(..., ge=1)
+    features: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class SubscriptionPlanUpdate(BaseModel):
+    """Subscription plan update request"""
+    display_name: Optional[str] = Field(None, min_length=2, max_length=100)
+    description: Optional[str] = None
+    monthly_price: Optional[float] = Field(None, ge=0)
+    yearly_price: Optional[float] = Field(None, ge=0)
+    max_doctors: Optional[int] = Field(None, ge=0)
+    max_patients: Optional[int] = Field(None, ge=0)
+    max_appointments_per_month: Optional[int] = Field(None, ge=0)
+    max_storage_gb: Optional[int] = Field(None, ge=1)
+    features: Optional[Dict[str, Any]] = None
+
+
+class PlanAssignmentCreate(BaseModel):
+    """Assign subscription plan to hospital"""
+    plan_name: str = Field(..., description="Plan name: FREE, STANDARD, or PREMIUM")
+    start_date: Optional[str] = Field(None, description="Start date in YYYY-MM-DD format")
+    end_date: Optional[str] = Field(None, description="End date in YYYY-MM-DD format")
+    is_trial: bool = False
+    auto_renew: bool = True
+
+
+# ============================================================================
+# HOSPITAL ADMIN INPUT SCHEMAS (Create/Update/Filter)
+# ============================================================================
+
+class HospitalAdminCreate(BaseModel):
+    """Hospital admin creation request"""
+    email: EmailStr = Field(..., description="Admin email address")
+    phone: str = Field(..., pattern=r'^\+?[\d\s\-\(\)]{10,20}$')
+    first_name: str = Field(..., min_length=2, max_length=100)
+    last_name: str = Field(..., min_length=2, max_length=100)
+    password: str = Field(..., min_length=8, max_length=128)
+    hospital_id: str = Field(..., description="UUID of hospital to assign admin to")
+
+class DepartmentCreate(BaseModel):
+    """Department creation request"""
+    name: str = Field(..., min_length=2, max_length=100, description="Department name")
+    code: str = Field(..., min_length=2, max_length=20, description="Department code (e.g., 'CARD', 'ORTHO')")
+    description: Optional[str] = Field(None, max_length=500)
+    head_of_department: Optional[str] = Field(None, description="HOD name")
+    location: Optional[str] = Field(None, max_length=200)
+    phone: Optional[str] = Field(None, pattern=r'^\+?[\d\s\-\(\)]{10,20}$')
+    email: Optional[EmailStr] = None
+    operating_hours: Optional[str] = Field(None, description="e.g., '9:00 AM - 5:00 PM'")
+    bed_capacity: Optional[int] = Field(None, ge=0)
+    specializations: Optional[List[str]] = Field(default_factory=list)
+    equipment_list: Optional[List[str]] = Field(default_factory=list)
+    emergency_services: bool = False
+
+
+class DepartmentUpdate(BaseModel):
+    """Department update request"""
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    head_of_department: Optional[str] = None
+    location: Optional[str] = Field(None, max_length=200)
+    phone: Optional[str] = Field(None, pattern=r'^\+?[\d\s\-\(\)]{10,20}$')
+    email: Optional[EmailStr] = None
+    operating_hours: Optional[str] = None
+    bed_capacity: Optional[int] = Field(None, ge=0)
+    specializations: Optional[List[str]] = None
+    equipment_list: Optional[List[str]] = None
+    emergency_services: Optional[bool] = None
+
+
+class DepartmentStatusUpdate(BaseModel):
+    """Department status update request"""
+    is_active: bool = Field(..., description="Enable (true) or disable (false) department")
+
+
+class StaffCreate(BaseModel):
+    """Staff user creation request (uses first_name + last_name only)."""
+
+    email: EmailStr = Field(..., description="Staff email address")
+    phone: str = Field(..., pattern=r'^\+?[\d\s\-\(\)]{10,20}$')
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    role: str = Field(
+        ...,
+        description="DOCTOR, NURSE, PHARMACIST, LAB_TECH, RECEPTIONIST",
+    )
+    password: str = Field(..., min_length=8, max_length=128)
+    emergency_contact: Optional[str] = Field(
+        None,
+        pattern=r'^\+?[\d\s\-\(\)]{10,20}$',
+        description="Emergency contact phone (UI)",
+    )
+    shift_timing: Optional[str] = Field(
+        None,
+        max_length=200,
+        description="Shift label, e.g. 'Morning (7AM-3PM)' — mapped to DAY/NIGHT/ROTATING for nurse/receptionist",
+    )
+    joining_date: Optional[str] = Field(
+        None,
+        description="Joining date: DD-MM-YYYY or YYYY-MM-DD",
+    )
+    address: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Full postal address (stored in profile metadata)",
+    )
+    doctor_specialization: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Optional; for doctors defaults to department name",
+    )
+
+    @field_validator("emergency_contact", "joining_date", "address", "shift_timing", mode="before")
+    @classmethod
+    def _empty_optional_to_none(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+
+class StaffStatusUpdate(BaseModel):
+    """Staff status update request"""
+    is_active: bool = Field(..., description="Activate (true) or deactivate (false) staff user")
+
+
+class AppointmentStatusUpdate(BaseModel):
+    """Appointment status update request"""
+    status: str = Field(..., description="New appointment status")
+    notes: Optional[str] = Field(None, description="Optional notes for status change")
+    admin_notes: Optional[str] = Field(None, description="Admin notes for audit")
+    cancellation_reason: Optional[str] = Field(None, description="Reason if cancelling")
+    reschedule_date: Optional[str] = Field(None, description="New date if rescheduling (YYYY-MM-DD)")
+    reschedule_time: Optional[str] = Field(None, description="New time if rescheduling (HH:MM)")
+    new_doctor_ref: Optional[str] = Field(None, description="Doctor ref (e.g. DOC-xxx) or doctor name for reassignment")
+
+
+class PatientStatusUpdate(BaseModel):
+    """Patient status update request"""
+    is_active: bool = Field(..., description="Activate (true) or deactivate (false) patient account")
+
+
+class WardCreate(BaseModel):
+    """Ward creation request"""
+    name: str = Field(..., min_length=2, max_length=100, description="Ward name")
+    ward_type: str = Field(..., description="Ward type: ICU, GENERAL, EMERGENCY, PRIVATE, MATERNITY, PEDIATRIC, SURGICAL, CARDIAC")
+    floor_number: int = Field(..., ge=0, description="Floor number (0 for ground floor)")
+    total_beds: int = Field(..., ge=1, le=100, description="Total number of beds")
+    description: Optional[str] = Field(None, max_length=500)
+    head_nurse: Optional[str] = Field(None, description="Head nurse name")
+    phone: Optional[str] = Field(None, pattern=r'^\+?[\d\s\-\(\)]{10,20}$')
+    facilities: Optional[List[str]] = Field(default_factory=list, description="Available facilities")
+    visiting_hours: Optional[str] = Field(None, description="e.g., '10:00 AM - 8:00 PM'")
+    emergency_access: bool = False
+    isolation_capability: bool = False
+    oxygen_supply: bool = False
+    nurse_station_location: Optional[str] = None
+
+
+class WardUpdate(BaseModel):
+    """Ward update request"""
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    ward_type: Optional[str] = None
+    floor_number: Optional[int] = Field(None, ge=0)
+    total_beds: Optional[int] = Field(None, ge=1, le=100)
+    description: Optional[str] = Field(None, max_length=500)
+    head_nurse: Optional[str] = None
+    phone: Optional[str] = Field(None, pattern=r'^\+?[\d\s\-\(\)]{10,20}$')
+    facilities: Optional[List[str]] = None
+    visiting_hours: Optional[str] = None
+    emergency_access: Optional[bool] = None
+    isolation_capability: Optional[bool] = None
+    oxygen_supply: Optional[bool] = None
+    nurse_station_location: Optional[str] = None
+
+
+class WardStatusUpdate(BaseModel):
+    """Ward status update request"""
+    is_active: bool = Field(..., description="Enable (true) or disable (false) ward")
+
+
+class BedCreate(BaseModel):
+    """Bed creation request"""
+    ward_name: str = Field(..., description="Name of ward")
+    bed_number: str = Field(..., min_length=1, max_length=20, description="Bed number/identifier")
+    bed_type: str = Field("GENERAL", description="Bed type: GENERAL, ICU, EMERGENCY, PRIVATE")
+    equipment: Optional[List[str]] = Field(default_factory=list, description="Attached equipment")
+    daily_rate: Optional[float] = Field(None, ge=0, description="Daily rate for this bed")
+    notes: Optional[str] = Field(None, max_length=500)
+    is_isolation: bool = False
+    has_oxygen: bool = False
+    has_monitor: bool = False
+
+
+class BedStatusUpdate(BaseModel):
+    """Bed status update request"""
+    status: str = Field(..., description="New bed status (AVAILABLE, OCCUPIED, MAINTENANCE, RESERVED)")
+
+
+class AdmissionCreate(BaseModel):
+    """Admission creation request"""
+    patient_ref: str = Field(..., description="Patient reference (e.g. PAT-001)")
+    admission_type: str = Field(..., description="Admission type: EMERGENCY, PLANNED, TRANSFER")
+    admission_date: str = Field(..., description="Admission date (YYYY-MM-DD)")
+    admission_time: str = Field(..., description="Admission time (HH:MM)")
+    admitting_doctor: str = Field(..., description="Admitting doctor name")
+    department: str = Field(..., description="Department name")
+    diagnosis: str = Field(..., min_length=5, description="Initial diagnosis")
+    symptoms: Optional[str] = Field(None, description="Presenting symptoms")
+    medical_history: Optional[str] = Field(None, description="Relevant medical history")
+    emergency_contact: Optional[str] = Field(None, description="Emergency contact details")
+    insurance_details: Optional[str] = Field(None, description="Insurance information")
+    estimated_stay_days: Optional[int] = Field(None, ge=1, description="Estimated length of stay")
+
+
+class BedAssignmentCreate(BaseModel):
+    """Bed assignment request"""
+    bed_id: str = Field(..., description="UUID of bed to assign")
+
+
+class DischargeCreate(BaseModel):
+    """Patient discharge request"""
+    discharge_type: str = Field("REGULAR", description="Discharge type (REGULAR, AMA, TRANSFER, DEATH)")
+    discharge_date: str = Field(..., description="Discharge date (YYYY-MM-DD)")
+    discharge_time: str = Field(..., description="Discharge time (HH:MM)")
+    discharging_doctor: str = Field(..., description="Discharging doctor name")
+    final_diagnosis: str = Field(..., min_length=5, description="Final diagnosis")
+    treatment_summary: Optional[str] = Field(None, description="Summary of treatment provided")
+    discharge_instructions: Optional[str] = Field(None, description="Instructions for patient")
+    follow_up_required: bool = False
+    follow_up_date: Optional[str] = Field(None, description="Follow-up date if required (YYYY-MM-DD)")
+    medications_prescribed: Optional[List[str]] = Field(default_factory=list)
+
+
+class DepartmentAssignmentCreate(BaseModel):
+    """Department assignment request"""
+    staff_name: str = Field(..., description="Staff member name (first name and last name)")
+    department_name: str = Field(..., description="Department name to assign to")
+
+
+class DepartmentUnassignmentCreate(BaseModel):
+    """Department unassignment request"""
+    staff_name: str = Field(..., description="Staff member name (first name and last name)")
+    department_name: str = Field(..., description="Department name to unassign from")
+
+
+# ============================================================================
+# OUTPUT SCHEMAS (Out/Response)
+# ============================================================================
+
+class HospitalListOut(BaseModel):
+    """Hospital list response"""
+    hospitals: List[Dict[str, Any]]
+    pagination: Dict[str, Any]
+
+
+class HospitalDetailsOut(BaseModel):
+    """Hospital details response"""
+    id: str
+    name: str
+    registration_number: str
+    email: str
+    phone: str
+    address: str
+    city: str
+    state: str
+    country: str
+    pincode: str
+    license_number: Optional[str]
+    established_date: Optional[str]
+    website: Optional[str]
+    logo_url: Optional[str]
+    status: str
+    created_at: str
+    updated_at: str
+
+
+# --- Hospital Admin dashboard (matches HospitalAdminService dashboard methods) ---
+
+
+class DashboardRecentActivityItem(BaseModel):
+    date: str
+    appointments: int
+    admissions: int
+
+
+class DashboardPatientMetrics(BaseModel):
+    total_patients: int
+    active_patients: int
+    patient_activity_rate: float
+
+
+class DashboardStaffMetrics(BaseModel):
+    total_staff: int
+    total_doctors: int
+    active_doctors: int
+    doctor_utilization_rate: float
+
+
+class DashboardAppointmentMetrics(BaseModel):
+    todays_appointments: int
+    monthly_appointments: int
+    completed_appointments: int
+    appointment_completion_rate: float
+
+
+class DashboardBedMetrics(BaseModel):
+    total_beds: int
+    occupied_beds: int
+    available_beds: int
+    bed_occupancy_rate: float
+    current_admissions: int
+    todays_admissions: int
+    todays_discharges: int
+
+
+class DashboardFacilityMetrics(BaseModel):
+    total_departments: int
+    total_wards: int
+
+
+class DashboardRevenueMetrics(BaseModel):
+    monthly_consultation_revenue: float
+    monthly_payments: float
+    total_monthly_revenue: float
+
+
+class DashboardOverviewOut(BaseModel):
+    """Hospital-scoped dashboard overview (single hospital from JWT)."""
+
+    dashboard_type: str
+    generated_at: str
+    hospital_id: str
+    patient_metrics: DashboardPatientMetrics
+    staff_metrics: DashboardStaffMetrics
+    appointment_metrics: DashboardAppointmentMetrics
+    bed_metrics: DashboardBedMetrics
+    facility_metrics: DashboardFacilityMetrics
+    revenue_metrics: DashboardRevenueMetrics
+    recent_activity: List[DashboardRecentActivityItem]
+
+
+class StaffDoctorLast30Days(BaseModel):
+    total_appointments: int
+    completed_appointments: int
+    completion_rate: float
+
+
+class StaffDoctorPerformanceItem(BaseModel):
+    doctor_id: str
+    name: str
+    specialization: Optional[str] = None
+    department: str
+    experience_years: Optional[int] = None
+    is_active: bool
+    last_30_days: StaffDoctorLast30Days
+
+
+class StaffRoleBreakdownItem(BaseModel):
+    role: str
+    total_count: int
+    active_count: int
+    inactive_count: int
+
+
+class StaffSummary(BaseModel):
+    total_staff: int
+    active_staff: int
+    total_doctors: int
+    total_departments: int
+
+
+class StaffDepartmentDistributionItem(BaseModel):
+    department_id: str
+    department_name: str
+    head_doctor: Optional[str] = None
+    doctor_count: int
+    is_active: bool
+
+
+class StaffStatisticsOut(BaseModel):
+    """Hospital staff statistics report."""
+
+    report_type: str
+    generated_at: str
+    hospital_id: str
+    summary: StaffSummary
+    role_breakdown: List[StaffRoleBreakdownItem]
+    doctor_performance: List[StaffDoctorPerformanceItem]
+    department_distribution: List[StaffDepartmentDistributionItem]
+
+
+class AppointmentDateRange(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from")
+    to: str
+
+
+class AppointmentOverallStatistics(BaseModel):
+    total_appointments: int
+    completed_appointments: int
+    cancelled_appointments: int
+    no_show_appointments: int
+    pending_appointments: int
+    emergency_appointments: int
+    completion_rate: float
+    cancellation_rate: float
+    no_show_rate: float
+
+
+class AppointmentPeriodSlice(BaseModel):
+    total: int
+    completed: int
+
+
+class AppointmentTimePeriodBreakdown(BaseModel):
+    today: AppointmentPeriodSlice
+    this_week: AppointmentPeriodSlice
+    this_month: AppointmentPeriodSlice
+
+
+class AppointmentDepartmentBreakdownItem(BaseModel):
+    department_name: str
+    department_id: str
+    total_appointments: int
+    completed_appointments: int
+    cancelled_appointments: int
+    no_show_appointments: int
+    completion_rate: float
+    revenue: float
+
+
+class AppointmentDailyTrendItem(BaseModel):
+    date: str
+    total_appointments: int
+    completed: int
+    cancelled: int
+    no_show: int
+
+
+class AppointmentTypeCountItem(BaseModel):
+    type: str
+    count: int
+
+
+class AppointmentStatisticsOut(BaseModel):
+    """Hospital appointment statistics report."""
+
+    report_type: str
+    generated_at: str
+    hospital_id: str
+    date_range: AppointmentDateRange
+    overall_statistics: AppointmentOverallStatistics
+    time_period_breakdown: AppointmentTimePeriodBreakdown
+    department_breakdown: List[AppointmentDepartmentBreakdownItem]
+    daily_trends: List[AppointmentDailyTrendItem]
+    appointment_types: List[AppointmentTypeCountItem]
+
+
+class BedOccupancyReportOut(BaseModel):
+    """Bed occupancy report response"""
+    report_type: str
+    total_beds: int
+    occupied_beds: int
+    available_beds: int
+    occupancy_rate: float
+    beds_by_ward: Dict[str, Dict[str, int]]
+
+
+class DepartmentPerformanceReportOut(BaseModel):
+    """Department performance report response"""
+    report_type: str
+    departments: List[Dict[str, Any]]
+    top_performing_departments: List[str]
+
+
+class RevenueSummaryReportOut(BaseModel):
+    """Revenue summary report response"""
+    report_type: str
+    total_revenue: float
+    revenue_this_month: float
+    revenue_by_department: Dict[str, float]
+    revenue_trend: List[Dict[str, Any]]
+
+
+class AdmissionListOut(BaseModel):
+    """Admission list response"""
+    admissions: List[Dict[str, Any]]
+    pagination: Dict[str, Any]
+
+
+class WardListOut(BaseModel):
+    """Ward list response"""
+    wards: List[Dict[str, Any]]
+    pagination: Dict[str, Any]
+
+
+class BedListOut(BaseModel):
+    """Bed list response"""
+    beds: List[Dict[str, Any]]
+    pagination: Dict[str, Any]
+
+
+class BedDetailsOut(BaseModel):
+    """Bed details response"""
+    id: str
+    ward_name: str
+    bed_number: str
+    bed_type: str
+    status: str
+    equipment: List[str]
+    daily_rate: Optional[float]
+    current_patient: Optional[Dict[str, Any]]
+    last_occupied: Optional[str]
+    maintenance_notes: Optional[str]
+    is_isolation: bool
+    has_oxygen: bool
+    has_monitor: bool
+
+
+class PatientListOut(BaseModel):
+    """Patient list response (non-medical data only)"""
+    patients: List[Dict[str, Any]]
+    pagination: Dict[str, Any]
+
+
+class AppointmentListOut(BaseModel):
+    """Appointment list response"""
+    appointments: List[Dict[str, Any]]
+    pagination: Dict[str, Any]
+
+
+class AppointmentDetailsOut(BaseModel):
+    """Appointment details response"""
+    id: str
+    patient_name: str
+    doctor_name: str
+    department: str
+    appointment_date: str
+    appointment_time: str
+    status: str
+    appointment_type: str
+    notes: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class StaffListOut(BaseModel):
+    """Staff list response"""
+    staff: List[Dict[str, Any]]
+    pagination: Dict[str, Any]
+
+
+class StaffDetailsOut(BaseModel):
+    """Staff details response"""
+    id: str
+    email: str
+    first_name: str
+    last_name: str
+    phone: str
+    role: str
+    department: Optional[str]
+    status: str
+    hire_date: Optional[str]
+    last_login: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class DepartmentListOut(BaseModel):
+    """Department list response"""
+    departments: List[Dict[str, Any]]
+    pagination: Dict[str, Any]
+
+
+class DepartmentDetailsOut(BaseModel):
+    """Department details response"""
+    id: str
+    name: str
+    description: Optional[str]
+    head_of_department: Optional[str]
+    location: Optional[str]
+    phone: Optional[str]
+    email: Optional[str]
+    operating_hours: Optional[str]
+    bed_capacity: Optional[int]
+    current_bed_occupancy: int
+    staff_count: int
+    specializations: List[str]
+    equipment_list: List[str]
+    emergency_services: bool
+    is_active: bool
+    created_at: str
+    updated_at: str

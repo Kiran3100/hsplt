@@ -16,8 +16,13 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+# app/services/email_service.py
+
 class EmailService:
     """Service for sending emails via SendGrid SMTP"""
+    
+    # SendGrid supports multiple ports
+    SENDGRID_PORTS = [2525, 587, 465]  # Priority order for Render
     
     def __init__(self):
         self.smtp_host = settings.SMTP_HOST
@@ -26,9 +31,72 @@ class EmailService:
         self.smtp_pass = settings.SMTP_PASS
         self.email_from = settings.EMAIL_FROM
         
+        # Validate configuration
+        if not self.smtp_user or not self.smtp_pass:
+            logger.warning(
+                "⚠️  SMTP credentials not configured!\n"
+                "For SendGrid, set:\n"
+                "  SMTP_USER=apikey\n"
+                "  SMTP_PASS=<your_sendgrid_api_key>"
+            )
+        
         logger.info(
-            f"EmailService initialized: SMTP host={self.smtp_host}, port={self.smtp_port}, user={self.smtp_user}"
+            f"EmailService initialized:\n"
+            f"  Provider: SendGrid SMTP\n"
+            f"  Host: {self.smtp_host}:{self.smtp_port}\n"
+            f"  User: {self.smtp_user}\n"
+            f"  From: {self.email_from}\n"
+            f"  Configured: {bool(self.smtp_user and self.smtp_pass)}"
         )
+    
+    async def _try_send_with_port(
+        self,
+        message,
+        port: int,
+        timeout: int = 10
+    ) -> tuple[bool, str]:
+        """
+        Try sending email with specific port.
+        Returns (success, error_message)
+        """
+        try:
+            logger.info(f"📡 Trying SMTP port {port}...")
+            
+            await asyncio.wait_for(
+                aiosmtplib.send(
+                    message,
+                    hostname=self.smtp_host,
+                    port=port,
+                    start_tls=True,
+                    username=self.smtp_user,
+                    password=self.smtp_pass,
+                    timeout=timeout,
+                ),
+                timeout=timeout + 5
+            )
+            
+            logger.info(f"✅ Email sent successfully via port {port}")
+            return True, None
+            
+        except asyncio.TimeoutError:
+            error = f"Timeout on port {port}"
+            logger.warning(f"⏱️  {error}")
+            return False, error
+            
+        except aiosmtplib.SMTPConnectTimeoutError:
+            error = f"Connection timeout on port {port}"
+            logger.warning(f"🔌 {error}")
+            return False, error
+            
+        except aiosmtplib.SMTPAuthenticationError as e:
+            error = f"Authentication failed: {str(e)}"
+            logger.error(f"🔐 {error}")
+            return False, error
+            
+        except Exception as e:
+            error = f"{type(e).__name__}: {str(e)}"
+            logger.warning(f"❌ Port {port} failed: {error}")
+            return False, error
     
     async def send_email(
         self, 
@@ -36,20 +104,21 @@ class EmailService:
         subject: str, 
         html_content: str, 
         text_content: Optional[str] = None,
-        timeout: int = 20
+        timeout: int = 15
     ) -> bool:
-        """Send email using SendGrid SMTP with enhanced logging"""
+        """
+        Send email using SendGrid SMTP with automatic port fallback.
+        Tries ports in order: 2525 (Render-friendly), 587, 465
+        """
         try:
-            logger.info(f"📧 Attempting to send email to {to_email}")
+            logger.info(f"📧 Sending email to {to_email}")
             logger.info(f"   Subject: {subject}")
-            logger.info(f"   SMTP: {self.smtp_host}:{self.smtp_port}")
-            logger.info(f"   User: {self.smtp_user}")
-            logger.info(f"   Pass: {'SET' if self.smtp_pass else 'NOT SET'}")
             
             if not self.smtp_user or not self.smtp_pass:
-                logger.error("❌ Cannot send email - SMTP credentials not configured")
+                logger.error("❌ SMTP credentials not configured")
                 return False
             
+            # Build message
             message = MIMEMultipart("alternative")
             message["Subject"] = subject
             message["From"] = self.email_from
@@ -60,43 +129,37 @@ class EmailService:
             
             message.attach(MIMEText(html_content, "html"))
             
-            logger.info(f"📤 Connecting to {self.smtp_host}:{self.smtp_port}...")
+            # Try primary port first
+            success, error = await self._try_send_with_port(message, self.smtp_port, timeout)
             
-            try:
-                result = await asyncio.wait_for(
-                    aiosmtplib.send(
-                        message,
-                        hostname=self.smtp_host,
-                        port=self.smtp_port,
-                        start_tls=True,
-                        username=self.smtp_user,
-                        password=self.smtp_pass,
-                        timeout=10,
-                    ),
-                    timeout=timeout
-                )
-                
-                logger.info(f"📬 SMTP Response: {result}")
-                logger.info(f"✅ Email sent successfully to {to_email}")
+            if success:
                 return True
+            
+            # If primary port failed, try alternatives (for Render compatibility)
+            logger.warning(f"⚠️  Primary port {self.smtp_port} failed: {error}")
+            logger.info("🔄 Trying alternative SendGrid ports...")
+            
+            for alt_port in self.SENDGRID_PORTS:
+                if alt_port == self.smtp_port:
+                    continue  # Skip already-tried port
                 
-            except asyncio.TimeoutError:
-                logger.error(f"⏱️ Email timed out after {timeout}s for {to_email}")
-                return False
-            except aiosmtplib.SMTPAuthenticationError as e:
-                logger.error(f"🔐 SMTP Authentication failed: {str(e)}")
-                logger.error(f"   Check: SMTP_USER={self.smtp_user}")
-                logger.error(f"   Check: SMTP_PASS starts with 'SG.'? {self.smtp_pass[:3] if self.smtp_pass else 'N/A'}")
-                return False
-            except aiosmtplib.SMTPResponseException as e:
-                logger.error(f"📮 SMTP Response Error: {e.code} - {e.message}")
-                return False
-            except aiosmtplib.SMTPException as e:
-                logger.error(f"📮 SMTP Error: {type(e).__name__}: {str(e)}")
-                return False
+                success, error = await self._try_send_with_port(message, alt_port, timeout)
                 
+                if success:
+                    logger.info(f"✅ Email sent via fallback port {alt_port}")
+                    logger.warning(
+                        f"💡 TIP: Update SMTP_PORT to {alt_port} in your environment "
+                        f"variables for better performance"
+                    )
+                    return True
+            
+            # All ports failed
+            logger.error(f"❌ All SMTP ports failed for {to_email}")
+            logger.error(f"   Tried ports: {[self.smtp_port] + [p for p in self.SENDGRID_PORTS if p != self.smtp_port]}")
+            return False
+            
         except Exception as e:
-            logger.error(f"❌ Unexpected error: {type(e).__name__}: {str(e)}")
+            logger.error(f"❌ Unexpected error sending email: {type(e).__name__}: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return False

@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     
     # Legacy SMTP settings (for backward compatibility)
     SMTP_HOST: str = Field(default="smtp.gmail.com", env="SMTP_HOST")
-    SMTP_PORT: int = Field(default=587, env="SMTP_PORT")
+    SMTP_PORT: int = Field(default=2525, env="SMTP_PORT")
     SMTP_USER: str = Field(default="", env="SMTP_USER")
     SMTP_PASS: str = Field(default="", env="SMTP_PASS")
     

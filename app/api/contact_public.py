@@ -11,6 +11,7 @@ from datetime import datetime
 from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+import os
 
 from app.core.config import settings
 from app.database.session import get_db_session

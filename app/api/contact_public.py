@@ -347,55 +347,127 @@ async def render_diagnostics():
         "test_smtp_connection": None,
     }
     
-    # Test SMTP connection with correct TLS handling
+    # Test multiple connection methods
+    port = settings.SMTP_PORT
+    connection_methods = []
+    
+    # Method 1: Plain connection with STARTTLS
     try:
         import aiosmtplib
         
-        port = settings.SMTP_PORT
-        # ONLY port 465 uses implicit TLS
-        # Ports 587 and 2525 both use STARTTLS
-        use_tls = (port == 465)
-        
-        diagnostics["test_smtp_connection"] = {
-            "status": "testing...",
-            "host": settings.SMTP_HOST,
+        method = {
+            "name": "STARTTLS",
             "port": port,
-            "use_tls": use_tls,
-            "method": "Implicit SSL/TLS" if use_tls else "STARTTLS"
+            "use_tls": False,
+            "start_tls": True,
         }
         
-        # Create SMTP client with appropriate settings
+        smtp = aiosmtplib.SMTP(hostname=settings.SMTP_HOST, port=port, timeout=10)
+        await smtp.connect()
+        method["connect"] = "✅"
+        
+        try:
+            await smtp.starttls()
+            method["starttls"] = "✅"
+        except Exception as e:
+            method["starttls"] = f"❌ {str(e)}"
+        
+        try:
+            if settings.SMTP_USER and settings.SMTP_PASS:
+                await smtp.login(settings.SMTP_USER, settings.SMTP_PASS)
+                method["login"] = "✅"
+                method["status"] = "✅ WORKS"
+        except Exception as e:
+            method["login"] = f"❌ {str(e)}"
+            method["status"] = "❌ FAILED"
+        
+        await smtp.quit()
+        connection_methods.append(method)
+    except Exception as e:
+        connection_methods.append({
+            "name": "STARTTLS",
+            "status": "❌ FAILED",
+            "error": str(e)
+        })
+    
+    # Method 2: Implicit TLS connection
+    try:
+        method = {
+            "name": "Implicit TLS",
+            "port": port,
+            "use_tls": True,
+            "start_tls": False,
+        }
+        
         smtp = aiosmtplib.SMTP(
             hostname=settings.SMTP_HOST,
             port=port,
-            use_tls=use_tls,
+            use_tls=True,
             timeout=10
         )
-        
         await smtp.connect()
-        diagnostics["test_smtp_connection"]["connect"] = "✅ SUCCESS"
+        method["connect"] = "✅"
+        method["starttls"] = "⏭️ SKIPPED"
         
-        # Only do STARTTLS if not using implicit TLS
-        if not use_tls:
-            await smtp.starttls()
-            diagnostics["test_smtp_connection"]["starttls"] = "✅ SUCCESS"
-        else:
-            diagnostics["test_smtp_connection"]["starttls"] = "⏭️ SKIPPED (using implicit TLS)"
-        
-        if settings.SMTP_USER and settings.SMTP_PASS:
-            await smtp.login(settings.SMTP_USER, settings.SMTP_PASS)
-            diagnostics["test_smtp_connection"]["login"] = "✅ SUCCESS"
-            diagnostics["test_smtp_connection"]["status"] = "✅ FULLY WORKING"
-        else:
-            diagnostics["test_smtp_connection"]["login"] = "⚠️ SKIPPED (no credentials)"
-            diagnostics["test_smtp_connection"]["status"] = "⚠️ CREDENTIALS MISSING"
+        try:
+            if settings.SMTP_USER and settings.SMTP_PASS:
+                await smtp.login(settings.SMTP_USER, settings.SMTP_PASS)
+                method["login"] = "✅"
+                method["status"] = "✅ WORKS"
+        except Exception as e:
+            method["login"] = f"❌ {str(e)}"
+            method["status"] = "❌ FAILED"
         
         await smtp.quit()
-        
+        connection_methods.append(method)
     except Exception as e:
-        diagnostics["test_smtp_connection"]["status"] = "❌ FAILED"
-        diagnostics["test_smtp_connection"]["error"] = str(e)
-        diagnostics["test_smtp_connection"]["error_type"] = type(e).__name__
+        connection_methods.append({
+            "name": "Implicit TLS",
+            "status": "❌ FAILED",
+            "error": str(e)
+        })
+    
+    # Method 3: Plain connection without TLS (for testing)
+    try:
+        method = {
+            "name": "Plain (no TLS)",
+            "port": port,
+            "use_tls": False,
+            "start_tls": False,
+        }
+        
+        smtp = aiosmtplib.SMTP(hostname=settings.SMTP_HOST, port=port, timeout=10)
+        await smtp.connect()
+        method["connect"] = "✅"
+        method["starttls"] = "⏭️ SKIPPED"
+        
+        try:
+            if settings.SMTP_USER and settings.SMTP_PASS:
+                await smtp.login(settings.SMTP_USER, settings.SMTP_PASS)
+                method["login"] = "✅"
+                method["status"] = "✅ WORKS"
+        except Exception as e:
+            method["login"] = f"❌ {str(e)}"
+            method["status"] = "❌ FAILED"
+        
+        await smtp.quit()
+        connection_methods.append(method)
+    except Exception as e:
+        connection_methods.append({
+            "name": "Plain (no TLS)",
+            "status": "❌ FAILED",
+            "error": str(e)
+        })
+    
+    # Find working method
+    working_method = next((m for m in connection_methods if m.get("status") == "✅ WORKS"), None)
+    
+    diagnostics["test_smtp_connection"] = {
+        "port": port,
+        "methods_tested": connection_methods,
+        "recommended_method": working_method["name"] if working_method else "NONE WORKING",
+        "status": "✅ FULLY WORKING" if working_method else "❌ ALL METHODS FAILED"
+    }
     
     return diagnostics
 

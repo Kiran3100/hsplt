@@ -1,10 +1,11 @@
-# email_service.py
+# app/services/email_service.py
 
 """
-Email service using SendGrid SMTP (not API)
+Email service using SendGrid SMTP with smart TLS handling
 """
 import aiosmtplib
 import asyncio
+import base64
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -16,13 +17,15 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-# app/services/email_service.py
-
 class EmailService:
     """Service for sending emails via SendGrid SMTP"""
     
-    # SendGrid supports multiple ports
-    SENDGRID_PORTS = [2525, 587, 465]  # Priority order for Render
+    # SendGrid port configurations
+    # Port 587: STARTTLS (connect plain, upgrade to TLS)
+    # Port 2525: Implicit TLS (TLS from start) - Render-friendly
+    # Port 465: Implicit TLS/SSL
+    SENDGRID_PORTS = [2525, 587, 465]
+    TLS_PORTS = {465, 2525}  # Ports that use implicit TLS
     
     def __init__(self):
         self.smtp_host = settings.SMTP_HOST
@@ -31,7 +34,6 @@ class EmailService:
         self.smtp_pass = settings.SMTP_PASS
         self.email_from = settings.EMAIL_FROM
         
-        # Validate configuration
         if not self.smtp_user or not self.smtp_pass:
             logger.warning(
                 "⚠️  SMTP credentials not configured!\n"
@@ -40,10 +42,12 @@ class EmailService:
                 "  SMTP_PASS=<your_sendgrid_api_key>"
             )
         
+        tls_mode = "Implicit TLS" if self.smtp_port in self.TLS_PORTS else "STARTTLS"
         logger.info(
             f"EmailService initialized:\n"
             f"  Provider: SendGrid SMTP\n"
             f"  Host: {self.smtp_host}:{self.smtp_port}\n"
+            f"  TLS Mode: {tls_mode}\n"
             f"  User: {self.smtp_user}\n"
             f"  From: {self.email_from}\n"
             f"  Configured: {bool(self.smtp_user and self.smtp_pass)}"
@@ -56,18 +60,22 @@ class EmailService:
         timeout: int = 10
     ) -> tuple[bool, str]:
         """
-        Try sending email with specific port.
+        Try sending email with specific port and appropriate TLS handling.
         Returns (success, error_message)
         """
         try:
-            logger.info(f"📡 Trying SMTP port {port}...")
+            use_tls = port in self.TLS_PORTS
+            tls_mode = "Implicit TLS" if use_tls else "STARTTLS"
+            
+            logger.info(f"📡 Trying port {port} ({tls_mode})...")
             
             await asyncio.wait_for(
                 aiosmtplib.send(
                     message,
                     hostname=self.smtp_host,
                     port=port,
-                    start_tls=True,
+                    use_tls=use_tls,  # Use implicit TLS for ports 465, 2525
+                    start_tls=(not use_tls),  # Only STARTTLS if not using implicit TLS
                     username=self.smtp_user,
                     password=self.smtp_pass,
                     timeout=timeout,
@@ -75,7 +83,7 @@ class EmailService:
                 timeout=timeout + 5
             )
             
-            logger.info(f"✅ Email sent successfully via port {port}")
+            logger.info(f"✅ Email sent successfully via port {port} ({tls_mode})")
             return True, None
             
         except asyncio.TimeoutError:
@@ -91,6 +99,11 @@ class EmailService:
         except aiosmtplib.SMTPAuthenticationError as e:
             error = f"Authentication failed: {str(e)}"
             logger.error(f"🔐 {error}")
+            return False, error
+        
+        except aiosmtplib.SMTPException as e:
+            error = f"SMTP error: {str(e)}"
+            logger.warning(f"📮 Port {port} failed: {error}")
             return False, error
             
         except Exception as e:
@@ -108,7 +121,7 @@ class EmailService:
     ) -> bool:
         """
         Send email using SendGrid SMTP with automatic port fallback.
-        Tries ports in order: 2525 (Render-friendly), 587, 465
+        Handles both STARTTLS (port 587) and implicit TLS (ports 465, 2525).
         """
         try:
             logger.info(f"📧 Sending email to {to_email}")
@@ -135,7 +148,7 @@ class EmailService:
             if success:
                 return True
             
-            # If primary port failed, try alternatives (for Render compatibility)
+            # If primary port failed, try alternatives
             logger.warning(f"⚠️  Primary port {self.smtp_port} failed: {error}")
             logger.info("🔄 Trying alternative SendGrid ports...")
             
@@ -148,22 +161,19 @@ class EmailService:
                 if success:
                     logger.info(f"✅ Email sent via fallback port {alt_port}")
                     logger.warning(
-                        f"💡 TIP: Update SMTP_PORT to {alt_port} in your environment "
-                        f"variables for better performance"
+                        f"💡 Update SMTP_PORT to {alt_port} in environment variables"
                     )
                     return True
             
             # All ports failed
             logger.error(f"❌ All SMTP ports failed for {to_email}")
-            logger.error(f"   Tried ports: {[self.smtp_port] + [p for p in self.SENDGRID_PORTS if p != self.smtp_port]}")
             return False
             
         except Exception as e:
-            logger.error(f"❌ Unexpected error sending email: {type(e).__name__}: {str(e)}")
+            logger.error(f"❌ Unexpected error: {type(e).__name__}: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return False
-
 
     async def send_document_email(
         self,
@@ -176,7 +186,7 @@ class EmailService:
         timeout: int = 30
     ) -> bool:
         """
-        Send email with PDF attachment via SendGrid
+        Send email with PDF attachment via SMTP.
         
         Args:
             to_email: Recipient email
@@ -193,74 +203,54 @@ class EmailService:
         try:
             logger.info(f"📎 Sending document email to {to_email} (attachment: {filename})")
             
-            if not self.sendgrid_api_key:
-                logger.error("SendGrid API key not configured")
+            if not self.smtp_user or not self.smtp_pass:
+                logger.error("SMTP credentials not configured")
                 return False
             
-            # Build content
-            content = []
+            # Build multipart message
+            message = MIMEMultipart()
+            message["Subject"] = subject
+            message["From"] = self.email_from
+            message["To"] = to_email
+            
+            # Add text/HTML parts
             if text_fallback:
-                content.append({
-                    "type": "text/plain",
-                    "value": text_fallback
-                })
-            content.append({
-                "type": "text/html",
-                "value": body_html
-            })
+                message.attach(MIMEText(text_fallback, "plain"))
+            message.attach(MIMEText(body_html, "html"))
             
-            # Encode PDF as base64
-            pdf_base64 = base64.b64encode(pdf_bytes).decode()
+            # Attach PDF
+            pdf_attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+            pdf_attachment.add_header(
+                "Content-Disposition",
+                "attachment",
+                filename=filename
+            )
+            message.attach(pdf_attachment)
             
-            payload = {
-                "personalizations": [
-                    {
-                        "to": [{"email": to_email}],
-                        "subject": subject
-                    }
-                ],
-                "from": {
-                    "email": self.email_from,
-                    "name": "Hospital Management System"
-                },
-                "content": content,
-                "attachments": [
-                    {
-                        "content": pdf_base64,
-                        "type": "application/pdf",
-                        "filename": filename,
-                        "disposition": "attachment"
-                    }
-                ]
-            }
+            # Send using the same port logic
+            use_tls = self.smtp_port in self.TLS_PORTS
             
-            headers = {
-                "Authorization": f"Bearer {self.sendgrid_api_key}",
-                "Content-Type": "application/json"
-            }
+            await asyncio.wait_for(
+                aiosmtplib.send(
+                    message,
+                    hostname=self.smtp_host,
+                    port=self.smtp_port,
+                    use_tls=use_tls,
+                    start_tls=(not use_tls),
+                    username=self.smtp_user,
+                    password=self.smtp_pass,
+                    timeout=timeout,
+                ),
+                timeout=timeout + 5
+            )
             
-            async with httpx.AsyncClient() as client:
-                response = await asyncio.wait_for(
-                    client.post(
-                        self.api_url,
-                        headers=headers,
-                        json=payload
-                    ),
-                    timeout=timeout
-                )
-            
-            if response.status_code == 202:
-                logger.info(f"✓ Document email sent to {to_email} (attachment: {filename})")
-                return True
-            else:
-                logger.error(
-                    f"✗ SendGrid API error: {response.status_code}\n"
-                    f"Response: {response.text}"
-                )
-                return False
+            logger.info(f"✅ Document email sent to {to_email} (attachment: {filename})")
+            return True
                 
         except Exception as e:
-            logger.error(f"✗ Failed to send document email to {to_email}: {type(e).__name__}: {str(e)}")
+            logger.error(f"❌ Failed to send document email to {to_email}: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
 
     async def send_verification_email(self, email: str, otp_code: str, first_name: str):

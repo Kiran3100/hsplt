@@ -308,12 +308,11 @@ async def send_contact_message(
     )
     
 
+# app/api/v1/contact_public.py
+
 @router.get("/render-diagnostics", include_in_schema=True)
 async def render_diagnostics():
-    """
-    Diagnostic endpoint to debug Render email issues.
-    Shows actual configuration values (be careful with sensitive data in production!)
-    """
+    """Diagnostic endpoint to debug Render email issues"""
     import os
     
     diagnostics = {
@@ -346,31 +345,41 @@ async def render_diagnostics():
             "SMTP_PASS_SET": bool(os.getenv("SMTP_PASS")),
             "SENDGRID_API_KEY_SET": bool(os.getenv("SENDGRID_API_KEY")),
         },
-        "test_smtp_connection": None,  # We'll populate this below
+        "test_smtp_connection": None,
     }
     
-    # Test SMTP connection
+    # Test SMTP connection with proper TLS handling
     try:
         import aiosmtplib
+        
+        port = settings.SMTP_PORT
+        use_tls = port in [465, 2525]  # These ports use implicit TLS
         
         diagnostics["test_smtp_connection"] = {
             "status": "testing...",
             "host": settings.SMTP_HOST,
-            "port": settings.SMTP_PORT,
+            "port": port,
+            "use_tls": use_tls,
+            "method": "TLS" if use_tls else "STARTTLS"
         }
         
-        # Try to connect
+        # Create SMTP client with appropriate TLS settings
         smtp = aiosmtplib.SMTP(
             hostname=settings.SMTP_HOST,
-            port=settings.SMTP_PORT,
+            port=port,
+            use_tls=use_tls,  # Use TLS immediately for ports 465, 2525
             timeout=10
         )
         
         await smtp.connect()
         diagnostics["test_smtp_connection"]["connect"] = "✅ SUCCESS"
         
-        await smtp.starttls()
-        diagnostics["test_smtp_connection"]["starttls"] = "✅ SUCCESS"
+        # Only do STARTTLS if not already using TLS
+        if not use_tls:
+            await smtp.starttls()
+            diagnostics["test_smtp_connection"]["starttls"] = "✅ SUCCESS"
+        else:
+            diagnostics["test_smtp_connection"]["starttls"] = "⏭️ SKIPPED (using TLS)"
         
         if settings.SMTP_USER and settings.SMTP_PASS:
             await smtp.login(settings.SMTP_USER, settings.SMTP_PASS)
@@ -383,17 +392,14 @@ async def render_diagnostics():
         await smtp.quit()
         
     except Exception as e:
-        diagnostics["test_smtp_connection"] = {
-            "status": "❌ FAILED",
-            "error": str(e),
-            "error_type": type(e).__name__,
-        }
+        diagnostics["test_smtp_connection"]["status"] = "❌ FAILED"
+        diagnostics["test_smtp_connection"]["error"] = str(e)
+        diagnostics["test_smtp_connection"]["error_type"] = type(e).__name__
     
     return diagnostics
 
 
 
-# Add this temporary endpoint
 @router.get("/env-check", include_in_schema=True)
 async def check_environment_variables():
     """Check if environment variables are actually set in Render"""

@@ -1,7 +1,7 @@
 # app/services/email_service.py
 
 """
-Email service using SendGrid SMTP with correct TLS handling
+Email service using SendGrid SMTP with correct port handling
 """
 import aiosmtplib
 import asyncio
@@ -20,12 +20,11 @@ logger = logging.getLogger(__name__)
 class EmailService:
     """Service for sending emails via SendGrid SMTP"""
     
-    # SendGrid port configurations
-    # Port 587: STARTTLS (standard)
-    # Port 2525: STARTTLS (Render-friendly alternative)
+    # SendGrid port configurations (tested on Render)
+    # Port 587: STARTTLS (standard, but blocked on Render)
+    # Port 2525: Opportunistic TLS (auto-upgrades, works on Render!)
     # Port 465: Implicit SSL/TLS
     SENDGRID_PORTS = [2525, 587, 465]
-    IMPLICIT_TLS_PORTS = {465}  # ONLY port 465 uses implicit TLS
     
     def __init__(self):
         self.smtp_host = settings.SMTP_HOST
@@ -42,7 +41,14 @@ class EmailService:
                 "  SMTP_PASS=<your_sendgrid_api_key>"
             )
         
-        tls_mode = "Implicit SSL/TLS" if self.smtp_port in self.IMPLICIT_TLS_PORTS else "STARTTLS"
+        # Determine TLS method based on port
+        if self.smtp_port == 465:
+            tls_mode = "Implicit SSL/TLS"
+        elif self.smtp_port == 2525:
+            tls_mode = "Opportunistic TLS (auto-upgrade)"
+        else:  # 587
+            tls_mode = "STARTTLS"
+        
         logger.info(
             f"EmailService initialized:\n"
             f"  Provider: SendGrid SMTP\n"
@@ -52,6 +58,22 @@ class EmailService:
             f"  From: {self.email_from}\n"
             f"  Configured: {bool(self.smtp_user and self.smtp_pass)}"
         )
+    
+    def _get_tls_settings(self, port: int) -> dict:
+        """
+        Get appropriate TLS settings for each port.
+        
+        Returns dict with 'use_tls' and 'start_tls' flags.
+        """
+        if port == 465:
+            # Port 465: Implicit TLS from start
+            return {"use_tls": True, "start_tls": False}
+        elif port == 2525:
+            # Port 2525: Plain connection, auto-upgrades to TLS (Render-friendly)
+            return {"use_tls": False, "start_tls": False}
+        else:
+            # Port 587: Standard STARTTLS
+            return {"use_tls": False, "start_tls": True}
     
     async def _try_send_with_port(
         self,
@@ -64,10 +86,14 @@ class EmailService:
         Returns (success, error_message)
         """
         try:
-            # Only port 465 uses implicit TLS
-            # Ports 587 and 2525 both use STARTTLS
-            use_tls = port in self.IMPLICIT_TLS_PORTS
-            tls_mode = "Implicit SSL/TLS" if use_tls else "STARTTLS"
+            tls_settings = self._get_tls_settings(port)
+            
+            if port == 465:
+                tls_mode = "Implicit TLS"
+            elif port == 2525:
+                tls_mode = "Opportunistic TLS"
+            else:
+                tls_mode = "STARTTLS"
             
             logger.info(f"📡 Trying port {port} ({tls_mode})...")
             
@@ -76,8 +102,8 @@ class EmailService:
                     message,
                     hostname=self.smtp_host,
                     port=port,
-                    use_tls=use_tls,  # Only True for port 465
-                    start_tls=(not use_tls),  # True for ports 587 and 2525
+                    use_tls=tls_settings["use_tls"],
+                    start_tls=tls_settings["start_tls"],
                     username=self.smtp_user,
                     password=self.smtp_pass,
                     timeout=timeout,
@@ -123,7 +149,7 @@ class EmailService:
     ) -> bool:
         """
         Send email using SendGrid SMTP with automatic port fallback.
-        Ports 587 and 2525 use STARTTLS, port 465 uses implicit SSL/TLS.
+        Port 2525 uses opportunistic TLS (works on Render!).
         """
         try:
             logger.info(f"📧 Sending email to {to_email}")
@@ -163,7 +189,7 @@ class EmailService:
                 if success:
                     logger.info(f"✅ Email sent via fallback port {alt_port}")
                     logger.warning(
-                        f"💡 Update SMTP_PORT to {alt_port} in environment variables"
+                        f"💡 Update SMTP_PORT to {alt_port} in environment variables for better performance"
                     )
                     return True
             
@@ -215,16 +241,16 @@ class EmailService:
             )
             message.attach(pdf_attachment)
             
-            # Send using the same port logic
-            use_tls = self.smtp_port in self.IMPLICIT_TLS_PORTS
+            # Get TLS settings for current port
+            tls_settings = self._get_tls_settings(self.smtp_port)
             
             await asyncio.wait_for(
                 aiosmtplib.send(
                     message,
                     hostname=self.smtp_host,
                     port=self.smtp_port,
-                    use_tls=use_tls,
-                    start_tls=(not use_tls),
+                    use_tls=tls_settings["use_tls"],
+                    start_tls=tls_settings["start_tls"],
                     username=self.smtp_user,
                     password=self.smtp_pass,
                     timeout=timeout,
@@ -263,57 +289,25 @@ class EmailService:
                 
                 <p style="font-size: 16px;">Hi <strong>{first_name}</strong>,</p>
                 
-                <p style="font-size: 16px;">Thank you for registering with our Hospital Management System. To complete your registration, please verify your email address using the code below:</p>
+                <p style="font-size: 16px;">Thank you for registering! Please verify your email using the code below:</p>
                 
                 <div style="background-color: #ffffff; padding: 25px; border-radius: 8px; text-align: center; margin: 30px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                     <div style="font-size: 14px; color: #666; margin-bottom: 10px;">Your verification code:</div>
                     <div style="font-size: 36px; font-weight: bold; color: #667eea; letter-spacing: 8px; font-family: 'Courier New', monospace;">{otp_code}</div>
                 </div>
                 
-                <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                    <p style="margin: 0; font-size: 14px;"><strong>⚠️ Important:</strong></p>
-                    <ul style="margin: 10px 0; padding-left: 20px; font-size: 14px;">
-                        <li>This code will expire in <strong>10 minutes</strong></li>
-                        <li>Do not share this code with anyone</li>
-                        <li>If you didn't request this verification, please ignore this email</li>
-                    </ul>
-                </div>
-                
-                <p style="font-size: 14px; color: #666; margin-top: 30px;">
-                    If you have any questions, please contact our support team.
-                </p>
+                <p style="font-size: 14px; color: #666;">This code expires in 10 minutes.</p>
                 
                 <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
                 
                 <p style="font-size: 16px; margin-bottom: 5px;">Best regards,</p>
                 <p style="font-size: 16px; margin-top: 0;"><strong>Hospital Management System Team</strong></p>
             </div>
-            
-            <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
-                <p>This is an automated message, please do not reply to this email.</p>
-            </div>
         </body>
         </html>
         """
         
-        text_content = f"""
-Email Verification
-
-Hi {first_name},
-
-Thank you for registering with our Hospital Management System. 
-To complete your registration, please verify your email address using this code:
-
-{otp_code}
-
-IMPORTANT:
-- This code will expire in 10 minutes
-- Do not share this code with anyone
-- If you didn't request this verification, please ignore this email
-
-Best regards,
-Hospital Management System Team
-        """
+        text_content = f"Hi {first_name},\n\nYour verification code: {otp_code}\n\nThis code expires in 10 minutes.\n\nBest regards,\nHospital Management System Team"
         
         return await self.send_email(email, subject, html_content, text_content)
     
@@ -339,58 +333,24 @@ Hospital Management System Team
                 
                 <p style="font-size: 16px;">Hi <strong>{first_name}</strong>,</p>
                 
-                <p style="font-size: 16px;">We received a request to reset your password. Use the code below to reset your password:</p>
+                <p style="font-size: 16px;">Use the code below to reset your password:</p>
                 
                 <div style="background-color: #ffffff; padding: 25px; border-radius: 8px; text-align: center; margin: 30px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                     <div style="font-size: 14px; color: #666; margin-bottom: 10px;">Your reset code:</div>
                     <div style="font-size: 36px; font-weight: bold; color: #e74c3c; letter-spacing: 8px; font-family: 'Courier New', monospace;">{otp_code}</div>
                 </div>
                 
-                <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                    <p style="margin: 0; font-size: 14px;"><strong>🔒 Security Notice:</strong></p>
-                    <ul style="margin: 10px 0; padding-left: 20px; font-size: 14px;">
-                        <li>This code will expire in <strong>10 minutes</strong></li>
-                        <li>Do not share this code with anyone</li>
-                        <li>If you didn't request this reset, please ignore this email</li>
-                        <li>Your password will remain unchanged until you complete the reset process</li>
-                    </ul>
-                </div>
-                
-                <p style="font-size: 14px; color: #666; margin-top: 30px;">
-                    If you continue to have problems, please contact our support team.
-                </p>
+                <p style="font-size: 14px; color: #666;">This code expires in 10 minutes.</p>
                 
                 <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
                 
                 <p style="font-size: 16px; margin-bottom: 5px;">Best regards,</p>
                 <p style="font-size: 16px; margin-top: 0;"><strong>Hospital Management System Team</strong></p>
             </div>
-            
-            <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
-                <p>This is an automated message, please do not reply to this email.</p>
-            </div>
         </body>
         </html>
         """
         
-        text_content = f"""
-Password Reset Request
-
-Hi {first_name},
-
-We received a request to reset your password. 
-Use this code to reset your password:
-
-{otp_code}
-
-SECURITY NOTICE:
-- This code will expire in 10 minutes
-- Do not share this code with anyone
-- If you didn't request this reset, please ignore this email
-- Your password will remain unchanged until you complete the reset process
-
-Best regards,
-Hospital Management System Team
-        """
+        text_content = f"Hi {first_name},\n\nYour password reset code: {otp_code}\n\nThis code expires in 10 minutes.\n\nBest regards,\nHospital Management System Team"
         
         return await self.send_email(email, subject, html_content, text_content)

@@ -22,10 +22,35 @@ class EmailService:
         self.smtp_user = settings.SMTP_USER
         self.smtp_pass = settings.SMTP_PASS
         self.email_from = settings.EMAIL_FROM
+        
+        # Log configuration (mask password)
+        logger.info(
+            f"EmailService initialized: host={self.smtp_host}, port={self.smtp_port}, "
+            f"user={self.smtp_user}, from={self.email_from}"
+        )
     
-    async def send_email(self, to_email: str, subject: str, html_content: str, text_content: Optional[str] = None):
-        """Send email using SMTP"""
+    async def send_email(
+        self, 
+        to_email: str, 
+        subject: str, 
+        html_content: str, 
+        text_content: Optional[str] = None
+    ) -> bool:
+        """
+        Send email using SMTP
+        
+        Returns:
+            bool: True if email sent successfully, False otherwise
+        """
         try:
+            logger.info(f"Attempting to send email to {to_email}")
+            logger.debug(f"Subject: {subject}")
+            
+            # Validate configuration
+            if not self.smtp_user or not self.smtp_pass:
+                logger.error("SMTP credentials not configured")
+                raise ValueError("SMTP_USER and SMTP_PASS must be set")
+            
             # Create message
             message = MIMEMultipart("alternative")
             message["Subject"] = subject
@@ -41,7 +66,12 @@ class EmailService:
             html_part = MIMEText(html_content, "html")
             message.attach(html_part)
             
-            # Send email
+            # Log connection attempt
+            logger.debug(
+                f"Connecting to SMTP server: {self.smtp_host}:{self.smtp_port}"
+            )
+            
+            # Send email with timeout
             await aiosmtplib.send(
                 message,
                 hostname=self.smtp_host,
@@ -49,12 +79,34 @@ class EmailService:
                 start_tls=True,
                 username=self.smtp_user,
                 password=self.smtp_pass,
+                timeout=30,  # 30 second timeout
             )
             
-            logger.info(f"Email sent successfully to {to_email}")
+            logger.info(f"✓ Email sent successfully to {to_email}")
+            return True
+            
+        except aiosmtplib.SMTPAuthenticationError as e:
+            logger.error(f"✗ SMTP Authentication failed for {to_email}: {str(e)}")
+            logger.error("Check SMTP_USER and SMTP_PASS environment variables")
+            logger.error("For Gmail, ensure you're using an App Password, not your regular password")
+            raise
+            
+        except aiosmtplib.SMTPRecipientsRefused as e:
+            logger.error(f"✗ Recipient refused for {to_email}: {str(e)}")
+            raise
+            
+        except aiosmtplib.SMTPException as e:
+            logger.error(f"✗ SMTP error sending email to {to_email}: {type(e).__name__}: {str(e)}")
+            raise
+            
+        except TimeoutError as e:
+            logger.error(f"✗ SMTP connection timeout for {to_email}: {str(e)}")
+            logger.error(f"Could not connect to {self.smtp_host}:{self.smtp_port}")
+            raise
             
         except Exception as e:
-            logger.error(f"Failed to send email to {to_email}: {str(e)}")
+            logger.error(f"✗ Unexpected error sending email to {to_email}: {type(e).__name__}: {str(e)}")
+            logger.exception("Full traceback:")
             raise
 
     async def send_document_email(
@@ -65,27 +117,46 @@ class EmailService:
         pdf_bytes: bytes,
         filename: str = "document.pdf",
         text_fallback: Optional[str] = None,
-    ):
-        """Send email with PDF attachment (e.g. invoice or receipt)."""
-        message = MIMEMultipart()
-        message["Subject"] = subject
-        message["From"] = self.email_from
-        message["To"] = to_email
-        if text_fallback:
-            message.attach(MIMEText(text_fallback, "plain"))
-        message.attach(MIMEText(body_html, "html"))
-        attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
-        attachment.add_header("Content-Disposition", "attachment", filename=filename)
-        message.attach(attachment)
-        await aiosmtplib.send(
-            message,
-            hostname=self.smtp_host,
-            port=self.smtp_port,
-            start_tls=True,
-            username=self.smtp_user,
-            password=self.smtp_pass,
-        )
-        logger.info(f"Document email sent to {to_email} (attachment: {filename})")
+    ) -> bool:
+        """
+        Send email with PDF attachment (e.g. invoice or receipt).
+        
+        Returns:
+            bool: True if email sent successfully
+        """
+        try:
+            logger.info(f"Sending document email to {to_email} (attachment: {filename})")
+            
+            message = MIMEMultipart()
+            message["Subject"] = subject
+            message["From"] = self.email_from
+            message["To"] = to_email
+            
+            if text_fallback:
+                message.attach(MIMEText(text_fallback, "plain"))
+            
+            message.attach(MIMEText(body_html, "html"))
+            
+            attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+            attachment.add_header("Content-Disposition", "attachment", filename=filename)
+            message.attach(attachment)
+            
+            await aiosmtplib.send(
+                message,
+                hostname=self.smtp_host,
+                port=self.smtp_port,
+                start_tls=True,
+                username=self.smtp_user,
+                password=self.smtp_pass,
+                timeout=30,
+            )
+            
+            logger.info(f"✓ Document email sent to {to_email} (attachment: {filename})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"✗ Failed to send document email to {to_email}: {type(e).__name__}: {str(e)}")
+            raise
 
     async def send_verification_email(self, email: str, otp_code: str, first_name: str):
         """Send email verification OTP"""

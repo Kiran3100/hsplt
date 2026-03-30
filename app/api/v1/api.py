@@ -36,6 +36,16 @@ try:
     logger.info("✓ Super Admin router loaded")
 except ImportError as e:
     logger.error(f"✗ Failed to load super admin router: {e}")
+ 
+
+# 3.user_management_router   
+    
+try:
+    from app.api.v1.routers.admin.user_management import router as user_management_router
+    api_router.include_router(user_management_router)
+    logger.info("✓ User Management router loaded")
+except ImportError as e:
+    logger.error(f"Failed to load user management router: {e}")
 
 # ============================================================================
 # 3. HOSPITAL ADMIN & ANALYTICS
